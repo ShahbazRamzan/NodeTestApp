@@ -1299,24 +1299,75 @@ exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
     offerStores: storesWithDistance,
   });
 });
+
+// exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.userLatitude) {
+//     return next(new ErrorHandler(400, "please enter user latitude"));
+//   }
+//   if (!req.body.userLongitude) {
+//     return next(new ErrorHandler(400, "please enter user longitude"));
+//   }
+//   const { userLatitude, userLongitude } = req.body;
+//   const maxDistance = 50000; // 50km in meters
+//   const today = new Date();
+//   const storeIds = await offerModel.distinct("store", {
+//     dateTillPromoAvailable: { $gte: new Date() },
+//     isDeleted: false,
+//   });
+//   if (storeIds.length === 0) {
+//     return next(new ErrorHandler(404, "No store Found"));
+//   }
+//   // const stores = await storeModel.find({ _id: { $in: storeIds } });
+//   const stores = await storeModel.find({
+//     _id: { $in: storeIds },
+//     location: {
+//       $near: {
+//         $geometry: {
+//           type: "Point",
+//           coordinates: [parseFloat(userLongitude), parseFloat(userLatitude)],
+//         },
+//         $maxDistance: maxDistance, // 50 km radius
+//       },
+//     },
+//   });
+//   const storesWithDistance = stores.map((store) => {
+//     const storeLat = store.location.coordinates[1];
+//     const storeLng = store.location.coordinates[0];
+
+//     const distance = geolib.getDistance(
+//       { latitude: userLatitude, longitude: userLongitude },
+//       { latitude: storeLat, longitude: storeLng }
+//     );
+
+//     // Add the distance field to the store object
+//     return Object.assign(store.toObject(), {
+//       distance: (distance / 1609.34).toFixed(2),
+//     }); // Convert meters to miles
+//   });
+//   res.status(200).json({
+//     success: true,
+//     message: "offer stores fetched successfully",
+//     offerStores: storesWithDistance,
+//   });
+// });
+
 exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.userLatitude) {
-    return next(new ErrorHandler(400, "please enter user latitude"));
+    return next(new ErrorHandler(400, "Please enter user latitude"));
   }
   if (!req.body.userLongitude) {
-    return next(new ErrorHandler(400, "please enter user longitude"));
+    return next(new ErrorHandler(400, "Please enter user longitude"));
   }
   const { userLatitude, userLongitude } = req.body;
-  const maxDistance = 50000; // 50km in meters
   const today = new Date();
   const storeIds = await offerModel.distinct("store", {
-    dateTillPromoAvailable: { $gte: new Date() },
+    dateTillPromoAvailable: { $gte: today },
     isDeleted: false,
   });
   if (storeIds.length === 0) {
-    return next(new ErrorHandler(404, "No store Found"));
+    return next(new ErrorHandler(404, "No stores found with offers"));
   }
-  // const stores = await storeModel.find({ _id: { $in: storeIds } });
+  // Fetch stores with offers, without a radius limit
   const stores = await storeModel.find({
     _id: { $in: storeIds },
     location: {
@@ -1325,27 +1376,24 @@ exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
           type: "Point",
           coordinates: [parseFloat(userLongitude), parseFloat(userLatitude)],
         },
-        $maxDistance: maxDistance, // 50 km radius
       },
     },
   });
   const storesWithDistance = stores.map((store) => {
     const storeLat = store.location.coordinates[1];
     const storeLng = store.location.coordinates[0];
-
     const distance = geolib.getDistance(
       { latitude: userLatitude, longitude: userLongitude },
       { latitude: storeLat, longitude: storeLng }
     );
-
     // Add the distance field to the store object
     return Object.assign(store.toObject(), {
-      distance: (distance / 1609.34).toFixed(2),
-    }); // Convert meters to miles
+      distance: (distance / 1609.34).toFixed(2), // Convert meters to miles
+    });
   });
   res.status(200).json({
     success: true,
-    message: "offer stores fetched successfully",
+    message: "Offer stores fetched successfully",
     offerStores: storesWithDistance,
   });
 });
