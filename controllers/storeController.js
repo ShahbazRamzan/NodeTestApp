@@ -16,6 +16,7 @@ const orderModel = require("../models/order");
 const sendEmailWithTemplate = require("../utils/sendEmailWithTemplate");
 const handlebars = require("handlebars");
 const { userWelcomeEmailTemplate } = require("../utils/template");
+const sendSMS = require("../utils/sendSms");
 
 exports.storeRegister = asyncErrorCatch(async (req, res, next) => {
   const msg = "OTP is send on your email, please verify it first";
@@ -92,14 +93,6 @@ exports.storeRegister = asyncErrorCatch(async (req, res, next) => {
     coverPhoto: req.files.storeCover[0].path,
   };
 
-  // if (req?.files?.storeProfile?.length > 0) {
-  //     Data.profile = req.files.storeProfile[0].path;
-  // }
-
-  // if (req?.files?.storeCover?.length > 0) {
-  //     Data.coverPhoto = req.files.storeCover[0].path;
-  // }
-
   const blockStore = await storeModel.findOne({
     email: email,
     isStoreBlock: true,
@@ -134,36 +127,78 @@ exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(400, "Please enter your email"));
   }
 
-  const msg =
-    "OTP is send on your email, please verify your email before login";
   const email = req.body.email.toLowerCase();
   const { password } = req.body;
+
   if (!email || !password) {
-    return next(new ErrorHandler(400, "please enter email and password"));
+    return next(new ErrorHandler(400, "Please enter email and password"));
   }
+
   const store = await storeModel.findOne({ email: email }).select("+password");
   if (!store) {
     return next(new ErrorHandler(401, "Invalid Email or Password"));
   }
+
   if (store.isStoreBlock === true) {
     return next(
-      new ErrorHandler(400, "sorry, your account has been blocked by admin")
+      new ErrorHandler(400, "Sorry, your account has been blocked by admin")
     );
   }
+
   const isPasswordMatched = await store.comparePassword(password);
   if (!isPasswordMatched) {
     return next(new ErrorHandler(401, "Invalid Email or Password"));
   }
 
+  // Check email verification first
   if (!store.isEmailVerified) {
     const token = "";
-    return sendOTPForEmailVerification(store, res, msg, token, true);
+    return sendOTPForEmailVerification(
+      store,
+      res,
+      "Please verify your email first",
+      token,
+      true
+    );
   }
 
+  // Check phone verification
+  if (!store.isPhoneVerified) {
+    // Send OTP for phone verification
+    const phoneVerifyOTP = store.getPhoneVerificationOTP();
+    await store.save({ validateBeforeSave: false });
+
+    const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+    try {
+      await sendSMS(store.number, message);
+      return res.status(200).json({
+        success: false,
+        message: "Please verify your phone number first",
+        requiresPhoneVerification: true,
+        store: {
+          _id: store._id,
+          number: store.number,
+        },
+      });
+    } catch (error) {
+      store.phoneVerifyOTP = undefined;
+      store.phoneVerifyOTPExpire = undefined;
+      await store.save({ validateBeforeSave: false });
+      return next(
+        new ErrorHandler(500, "Error sending SMS. Please try again later.")
+      );
+    }
+  }
+
+  // If both email and phone are verified, proceed with login
   const token = await store.getJWTToken();
-  res
-    .status(200)
-    .json({ success: true, message: "Login Successfully", token, store });
+  res.status(200).json({
+    success: true,
+    message: "Login Successfully",
+    token,
+    store,
+  });
 });
 
 exports.forgotPassword = asyncErrorCatch(async (req, res, next) => {
@@ -324,6 +359,46 @@ exports.resendEmailVerificationOTP = asyncErrorCatch(async (req, res, next) => {
   }
 });
 
+// exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
+//   async (req, res, next) => {
+//     if (!req.body.OTP) {
+//       return next(new ErrorHandler(400, "Please enter email verification OTP"));
+//     }
+//     if (!req.body._id) {
+//       return next(new ErrorHandler(400, "Please enter store Id"));
+//     }
+
+//     const emailverifyOTP = crypto
+//       .createHash("sha256")
+//       .update(req.body.OTP)
+//       .digest("hex");
+//     const store = await storeModel.findOne({
+//       emailverifyOTP,
+//       _id: req.body._id,
+//       emailVerifyOTPExpire: { $gt: Date.now() },
+//     });
+//     if (!store) {
+//       return next(new ErrorHandler(400, "Your OTP was expired"));
+//     }
+//     store.isEmailVerified = true;
+//     const obj = await store.save({ validateBeforeSave: false });
+//     if (!obj) {
+//       return next(new ErrorHandler(400, "Email Not Verified"));
+//     }
+//     const url = `http://localhost:5001/api/v1/payment/connect-stripe-account/${store._id}`;
+
+//     const message = `You have one last step left! Please click on the link to connect your stripe account ${url}`;
+//     await sendEmailTostore({
+//       email: store.email,
+//       subject: "E-Store",
+//       message,
+//       html: userWelcomeEmailTemplate({ url }),
+//     });
+//     res
+//       .status(200)
+//       .json({ success: true, message: "Email verified", store: store });
+//   }
+// );
 exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
   async (req, res, next) => {
     if (!req.body.OTP) {
@@ -337,31 +412,59 @@ exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
       .createHash("sha256")
       .update(req.body.OTP)
       .digest("hex");
+
     const store = await storeModel.findOne({
       emailverifyOTP,
       _id: req.body._id,
       emailVerifyOTPExpire: { $gt: Date.now() },
     });
+
     if (!store) {
       return next(new ErrorHandler(400, "Your OTP was expired"));
     }
+
     store.isEmailVerified = true;
     const obj = await store.save({ validateBeforeSave: false });
+
     if (!obj) {
       return next(new ErrorHandler(400, "Email Not Verified"));
     }
-    const url = `http://localhost:5001/api/v1/payment/connect-stripe-account/${store._id}`;
 
-    const message = `You have one last step left! Please click on the link to connect your stripe account ${url}`;
-    await sendEmailTostore({
-      email: store.email,
-      subject: "E-Store",
-      message,
-      html: userWelcomeEmailTemplate({ url }),
-    });
-    res
-      .status(200)
-      .json({ success: true, message: "Email verified", store: store });
+    // After email verification, automatically send phone verification OTP
+    const phoneVerifyOTP = store.getPhoneVerificationOTP();
+    await store.save({ validateBeforeSave: false });
+
+    const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+    try {
+      await sendSMS(store.number, smsMessage);
+
+      // const url = `http://localhost:5001/api/v1/payment/connect-stripe-account/${store._id}`;
+      // const emailMessage = `You have one last step left! Please click on the link to connect your stripe account ${url}`;
+      // await sendEmailTostore({
+      //   email: store.email,
+      //   subject: "E-Store",
+      //   message: emailMessage,
+      //   html: userWelcomeEmailTemplate({ url }),
+      // });
+
+      res.status(200).json({
+        success: true,
+        message: "Email verified. Please verify your phone number.",
+        requiresPhoneVerification: true,
+        store: {
+          _id: store._id,
+          number: store.number,
+        },
+      });
+    } catch (error) {
+      store.phoneVerifyOTP = undefined;
+      store.phoneVerifyOTPExpire = undefined;
+      await store.save({ validateBeforeSave: false });
+      return next(
+        new ErrorHandler(500, "Error sending SMS. Please try again later.")
+      );
+    }
   }
 );
 
@@ -458,17 +561,6 @@ exports.updatestoreOwnPassword = asyncErrorCatch(async (req, res, next) => {
 });
 
 exports.updateStoreOwnProfile = asyncErrorCatch(async (req, res, next) => {
-  // if (!req.body.name) {
-  //     return next(new ErrorHandler(400, "Please enter your name"))
-  // }
-  // if (!req.body.number) {
-  //     return next(new ErrorHandler(400, "Please enter your mobile number"))
-  // }
-  // if (!req.body.address) {
-  //     return next(new ErrorHandler(400, "Please enter your address"))
-  // }
-  // if (!req.body.storeCategoryType) {
-  //     return next(new ErrorHandler(400, "Please select store category type"))
   // }
   if (!req.body._id) {
     return next(new ErrorHandler(400, "Please enter store Id"));
@@ -592,78 +684,6 @@ exports.getStoreReviews = asyncErrorCatch(async (req, res, next) => {
   });
 });
 
-// exports.getAllstores = asyncErrorCatch(async (req, res, next) => {
-//     if (!req.body.userLatitude) {
-//         return next(new ErrorHandler(400, "please enter user latitude"))
-//     }
-//     if (!req.body.userLongitude) {
-//         return next(new ErrorHandler(400, "please enter user longitude"))
-//     }
-//     const { userLatitude, userLongitude } = req.body
-//     const stores = await storeModel.find();
-//     if (stores.length === 0) {
-//         return next(new ErrorHandler(400, "No store Found"));
-//     }
-//     const storesWithDistance = stores.map(store => {
-//         const storeLat = store.location.coordinates[1];
-//         const storeLng = store.location.coordinates[0];
-
-//         const distance = geolib.getDistance(
-//             { latitude: userLatitude, longitude: userLongitude },
-//             { latitude: storeLat, longitude: storeLng }
-//         );
-
-//         // Add the distance field to the store object
-//         return Object.assign(store.toObject(), { distance: (distance / 1609.34).toFixed(2) }); // Convert meters to miles
-//     });
-
-//     res.status(200).json({ success: true, stores: storesWithDistance, message: "All stores fetched successfully" })
-// })
-
-// exports.getAllstores = asyncErrorCatch(async (req, res, next) => {
-//   const { userLatitude, userLongitude } = req.body;
-
-//   if (!userLatitude) {
-//     return next(new ErrorHandler(400, "Please enter user latitude"));
-//   }
-
-//   if (!userLongitude) {
-//     return next(new ErrorHandler(400, "Please enter user longitude"));
-//   }
-
-//   const stores = await storeModel.aggregate([
-//     {
-//       $geoNear: {
-//         near: {
-//           type: "Point",
-//           coordinates: [userLongitude, userLatitude],
-//         },
-//         distanceField: "distance",
-//         maxDistance: 50000,
-//         spherical: true,
-//       },
-//     },
-//     {
-//       $project: {
-//         distance: { $divide: ["$distance", 1609.34] },
-//         name: 1,
-//         address: 1,
-//         location: 1,
-//       },
-//     },
-//   ]);
-
-//   if (stores.length === 0) {
-//     return next(new ErrorHandler(400, "No store found"));
-//   }
-
-//   res.status(200).json({
-//     success: true,
-//     stores,
-//     message: "All stores fetched successfully",
-//   });
-// });
-
 exports.getAllstores = asyncErrorCatch(async (req, res, next) => {
   const { userLatitude, userLongitude } = req.body;
 
@@ -683,6 +703,7 @@ exports.getAllstores = asyncErrorCatch(async (req, res, next) => {
           coordinates: [userLongitude, userLatitude],
         },
         distanceField: "distance",
+        maxDistance: 50000,
         spherical: true,
       },
     },
@@ -707,62 +728,6 @@ exports.getAllstores = asyncErrorCatch(async (req, res, next) => {
   });
 });
 
-
-// exports.getAllNearestStores = asyncErrorCatch(async (req, res, next) => {
-//   if (!req.body.latitude) {
-//     return next(new ErrorHandler(400, "please enter user latitude"));
-//   }
-//   if (!req.body.longitude) {
-//     return next(new ErrorHandler(400, "please enter user longitude"));
-//   }
-
-//   const { latitude, longitude } = req.body;
-//   const maxDistance = 50000; // 50 kilometers
-//   const stores = await storeModel.find({
-//     location: {
-//       $near: {
-//         $geometry: {
-//           type: "Point",
-//           coordinates: [parseFloat(longitude), parseFloat(latitude)],
-//         },
-//         $maxDistance: maxDistance,
-//       },
-//     },
-//   });
-
-//   const storesWithDistance = stores.map((store) => {
-//     const storeLat = store.location.coordinates[1];
-//     const storeLng = store.location.coordinates[0];
-
-//     const distance = geolib.getDistance(
-//       { latitude: latitude, longitude: longitude },
-//       { latitude: storeLat, longitude: storeLng }
-//     );
-
-//     // Add the distance field to the store object
-//     return Object.assign(store.toObject(), {
-//       distance: (distance / 1609.34).toFixed(2),
-//     }); // Convert meters to miles
-//   });
-
-//   res.status(200).json({
-//     success: true,
-//     stores: storesWithDistance,
-//     message: "All stores fetched successfully",
-//   });
-//   //   res.json(stores);
-
-//   // const stores = await storeModel.find();
-//   // if (stores.length === 0) {
-//   //     return next(new ErrorHandler(400, "No store Found"));
-//   // }
-//   // const { latitude, longitude } = req.body;
-//   // const nearestStores = geolib.orderByDistance(
-//   //     { latitude, longitude },
-//   //     stores
-//   // ).filter((store) => geolib.getDistance(store, { latitude, longitude }) <= 50000);
-// });
-
 exports.getAllNearestStores = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.latitude) {
     return next(new ErrorHandler(400, "Please enter user latitude"));
@@ -770,7 +735,9 @@ exports.getAllNearestStores = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.longitude) {
     return next(new ErrorHandler(400, "Please enter user longitude"));
   }
+
   const { latitude, longitude } = req.body;
+
   const stores = await storeModel.find({
     location: {
       $near: {
@@ -781,18 +748,22 @@ exports.getAllNearestStores = asyncErrorCatch(async (req, res, next) => {
       },
     },
   });
+
   const storesWithDistance = stores.map((store) => {
     const storeLat = store.location.coordinates[1];
     const storeLng = store.location.coordinates[0];
+
     const distance = geolib.getDistance(
       { latitude: latitude, longitude: longitude },
       { latitude: storeLat, longitude: storeLng }
     );
+
     // Add the distance field to the store object
     return Object.assign(store.toObject(), {
       distance: (distance / 1609.34).toFixed(2), // Convert meters to miles
     });
   });
+
   res.status(200).json({
     success: true,
     stores: storesWithDistance,
@@ -1175,41 +1146,6 @@ exports.getTotalNumberOfStoresByMonth = asyncErrorCatch(
   }
 );
 
-// exports.getTotalNumberOfStoresByMonth = asyncErrorCatch(async (req, res, next) => {
-//     const currentDate = new Date();
-//     const lastFourMonths = [];
-//     const totalBlockedStores = [0, 0, 0, 0];
-//     const totalVerifiedStores = [0, 0, 0, 0];
-
-//     for (let i = 3; i >= 0; i--) {
-//         const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-//         const monthName = monthDate.toLocaleString('default', { month: 'long' });
-//         lastFourMonths.push(monthName);
-//     }
-
-//     const blockedStores = await storeModel.find({ isStoreBlock: true });
-//     const verifiedStores = await storeModel.find({ isDocumentVerified: true, isEmailVerified: true });
-
-//     blockedStores.forEach(store => {
-//         const date = new Date(store.blockedAt);
-//         const monthIndex = lastFourMonths.indexOf(getMonthNameFromDate(date));
-//         if (monthIndex !== -1) {
-//             totalBlockedStores[monthIndex]++;
-//         }
-//     });
-
-//     verifiedStores.forEach(store => {
-//         const date = new Date(store.verifiedAt);
-//         const monthIndex = lastFourMonths.indexOf(getMonthNameFromDate(date));
-//         if (monthIndex !== -1) {
-//             totalVerifiedStores[monthIndex]++;
-//         }
-//     });
-
-//     res.status(200).json({ success: true, totalVerifiedStores, totalBlockedStores, lastFourMonths });
-// });
-// combined monthly blocked and verified data ends
-
 exports.getTotalNumberOfStoresBlockByMonth = asyncErrorCatch(
   async (req, res, next) => {
     // get the current date
@@ -1312,18 +1248,6 @@ exports.getTotalNumberOfstoresByAdminWhoAreVerified = asyncErrorCatch(
     res
       .status(200)
       .json({ success: true, toatalVerifiedStores, lastFourMonths });
-    // if (store.updatedAt === "January" || store.updatedAt === "February" || store.updatedAt === "March") {
-    //     toatalVerifiedStores[0] += 1
-    // }
-    // else if (store.updatedAt === "April" || store.updatedAt === "May" || store.updatedAt === "June") {
-    //     toatalVerifiedStores[1] += 1
-    // }
-    // else if (store.updatedAt === "July" || store.updatedAt === "August" || store.updatedAt === "September") {
-    //     toatalVerifiedStores[2] += 1
-    // }
-    // else if (store.updatedAt === "October" || store.updatedAt === "November" || store.updatedAt === "December") {
-    //     toatalVerifiedStores[3] += 1
-    // }
   }
 );
 
@@ -1391,3 +1315,121 @@ exports.getStoreFees = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server Error" });
   }
 };
+exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
+  if (!req.body.number) {
+    return next(new ErrorHandler(400, "Please provide your phone number"));
+  }
+
+  const store = await storeModel.findById(req.body._id);
+  if (!store) {
+    return next(new ErrorHandler(404, "Store not found"));
+  }
+
+  const phoneVerifyOTP = store.getPhoneVerificationOTP();
+  await store.save({ validateBeforeSave: false });
+
+  const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+  try {
+    await sendSMS(req.body.number, message);
+
+    res.status(200).json({
+      success: true,
+      message: "Verification code sent to your phone number",
+      store: {
+        _id: store._id,
+        number: store.number,
+      },
+    });
+  } catch (error) {
+    store.phoneVerifyOTP = undefined;
+    store.phoneVerifyOTPExpire = undefined;
+    await store.save({ validateBeforeSave: false });
+
+    return next(
+      new ErrorHandler(500, "Error sending SMS. Please try again later.")
+    );
+  }
+});
+
+exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
+  if (!req.body.OTP) {
+    return next(new ErrorHandler(400, "Please enter phone verification OTP"));
+  }
+  if (!req.body._id) {
+    return next(new ErrorHandler(400, "Please enter store Id"));
+  }
+
+  const phoneVerifyOTP = crypto
+    .createHash("sha256")
+    .update(req.body.OTP)
+    .digest("hex");
+
+  const store = await storeModel.findOne({
+    phoneVerifyOTP,
+    _id: req.body._id,
+    phoneVerifyOTPExpire: { $gt: Date.now() },
+  });
+
+  if (!store) {
+    return next(new ErrorHandler(400, "Invalid OTP or OTP has expired"));
+  }
+
+  store.isPhoneVerified = true;
+  store.phoneVerifyOTP = undefined;
+  store.phoneVerifyOTPExpire = undefined;
+
+  await store.save({ validateBeforeSave: false });
+
+  res.status(200).json({
+    success: true,
+    message: "Phone number verified successfully",
+    store,
+  });
+});
+
+exports.resendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
+  if (!req.body.number) {
+    return next(new ErrorHandler(400, "Please provide your phone number"));
+  }
+  if (!req.body._id) {
+    return next(new ErrorHandler(400, "Please provide store ID"));
+  }
+
+  const store = await storeModel.findOne({
+    _id: req.body._id,
+    number: req.body.number,
+  });
+
+  if (!store) {
+    return next(
+      new ErrorHandler(404, "Store not found with this phone number")
+    );
+  }
+
+  if (store.isPhoneVerified) {
+    return next(new ErrorHandler(400, "Phone number is already verified"));
+  }
+
+  const phoneVerifyOTP = store.getPhoneVerificationOTP();
+  await store.save({ validateBeforeSave: false });
+
+  const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+  try {
+    await sendSMS(store.number, message);
+
+    res.status(200).json({
+      success: true,
+      message: "New verification code sent to your phone number",
+    });
+  } catch (error) {
+    store.phoneVerifyOTP = undefined;
+    store.phoneVerifyOTPExpire = undefined;
+    await store.save({ validateBeforeSave: false });
+
+    return next(
+      new ErrorHandler(500, "Error sending SMS. Please try again later.")
+    );
+  }
+});

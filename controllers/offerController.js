@@ -14,7 +14,7 @@ const offerModel = require("../models/offer");
 const productModel = require("../models/product");
 const { ObjectId } = require("mongodb");
 const storeModel = require("../models/store");
-const cartModel = require("../models/cart")
+const cartModel = require("../models/cart");
 exports.addProductInOffer = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.offerProducts) {
     return next(new ErrorHandler(400, "Please select products"));
@@ -536,7 +536,9 @@ exports.updateOfferCategoryType = asyncErrorCatch(async (req, res, next) => {
       return next(new ErrorHandler(400, "Please enter discounted percentage"));
     }
     if (!req.body.dateTillPromoAvailable) {
-      return next(new ErrorHandler(400, "Please enter date till promo available"));
+      return next(
+        new ErrorHandler(400, "Please enter date till promo available")
+      );
     }
 
     // Parse and format the date
@@ -594,13 +596,14 @@ exports.updateOfferCategoryType = asyncErrorCatch(async (req, res, next) => {
         }
       }
     } else {
-      res.status(200).json({ success: true, message: "Offer category type updated" });
+      res
+        .status(200)
+        .json({ success: true, message: "Offer category type updated" });
     }
   } catch (err) {
     return next(new ErrorHandler(400, err.message));
   }
 });
-
 
 exports.removeProductFromOffer = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.store) {
@@ -1299,58 +1302,6 @@ exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
     offerStores: storesWithDistance,
   });
 });
-
-// exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
-//   if (!req.body.userLatitude) {
-//     return next(new ErrorHandler(400, "please enter user latitude"));
-//   }
-//   if (!req.body.userLongitude) {
-//     return next(new ErrorHandler(400, "please enter user longitude"));
-//   }
-//   const { userLatitude, userLongitude } = req.body;
-//   const maxDistance = 50000; // 50km in meters
-//   const today = new Date();
-//   const storeIds = await offerModel.distinct("store", {
-//     dateTillPromoAvailable: { $gte: new Date() },
-//     isDeleted: false,
-//   });
-//   if (storeIds.length === 0) {
-//     return next(new ErrorHandler(404, "No store Found"));
-//   }
-//   // const stores = await storeModel.find({ _id: { $in: storeIds } });
-//   const stores = await storeModel.find({
-//     _id: { $in: storeIds },
-//     location: {
-//       $near: {
-//         $geometry: {
-//           type: "Point",
-//           coordinates: [parseFloat(userLongitude), parseFloat(userLatitude)],
-//         },
-//         $maxDistance: maxDistance, // 50 km radius
-//       },
-//     },
-//   });
-//   const storesWithDistance = stores.map((store) => {
-//     const storeLat = store.location.coordinates[1];
-//     const storeLng = store.location.coordinates[0];
-
-//     const distance = geolib.getDistance(
-//       { latitude: userLatitude, longitude: userLongitude },
-//       { latitude: storeLat, longitude: storeLng }
-//     );
-
-//     // Add the distance field to the store object
-//     return Object.assign(store.toObject(), {
-//       distance: (distance / 1609.34).toFixed(2),
-//     }); // Convert meters to miles
-//   });
-//   res.status(200).json({
-//     success: true,
-//     message: "offer stores fetched successfully",
-//     offerStores: storesWithDistance,
-//   });
-// });
-
 exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.userLatitude) {
     return next(new ErrorHandler(400, "Please enter user latitude"));
@@ -1358,15 +1309,19 @@ exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.userLongitude) {
     return next(new ErrorHandler(400, "Please enter user longitude"));
   }
+
   const { userLatitude, userLongitude } = req.body;
   const today = new Date();
+
   const storeIds = await offerModel.distinct("store", {
     dateTillPromoAvailable: { $gte: today },
     isDeleted: false,
   });
+
   if (storeIds.length === 0) {
     return next(new ErrorHandler(404, "No stores found with offers"));
   }
+
   // Fetch stores with offers, without a radius limit
   const stores = await storeModel.find({
     _id: { $in: storeIds },
@@ -1379,18 +1334,22 @@ exports.getAllStoresThatHaveOffer = asyncErrorCatch(async (req, res, next) => {
       },
     },
   });
+
   const storesWithDistance = stores.map((store) => {
     const storeLat = store.location.coordinates[1];
     const storeLng = store.location.coordinates[0];
+
     const distance = geolib.getDistance(
       { latitude: userLatitude, longitude: userLongitude },
       { latitude: storeLat, longitude: storeLng }
     );
+
     // Add the distance field to the store object
     return Object.assign(store.toObject(), {
       distance: (distance / 1609.34).toFixed(2), // Convert meters to miles
     });
   });
+
   res.status(200).json({
     success: true,
     message: "Offer stores fetched successfully",
@@ -1490,19 +1449,25 @@ exports.removeExpiredOffers = async () => {
     const currentDate = new Date();
 
     // Find expired offers
-    const expiredOffers = await offerModel.find({ dateTillPromoAvailable: { $lt: currentDate } });
+    const expiredOffers = await offerModel.find({
+      dateTillPromoAvailable: { $lt: currentDate },
+    });
     if (!expiredOffers || expiredOffers.length === 0) {
       console.log("No expired offers found");
       return;
     }
 
     for (const offer of expiredOffers) {
-      console.log(`Processing expired offer: ${offer._id} for store: ${offer.store}`);
+      console.log(
+        `Processing expired offer: ${offer._id} for store: ${offer.store}`
+      );
 
       // Always update the offer products
       if (offer.offerProducts?.length > 0) {
         for (const product of offer.offerProducts) {
-          console.log(`Reverting product: ${product.product}, Stock to add: ${product.stock}`);
+          console.log(
+            `Reverting product: ${product.product}, Stock to add: ${product.stock}`
+          );
 
           const updateResult = await productModel.updateOne(
             { _id: product.product },
@@ -1517,7 +1482,10 @@ exports.removeExpiredOffers = async () => {
             }
           );
 
-          console.log(`Update result for product ${product.product}:`, updateResult);
+          console.log(
+            `Update result for product ${product.product}:`,
+            updateResult
+          );
         }
       }
 
@@ -1530,8 +1498,8 @@ exports.removeExpiredOffers = async () => {
             console.log(`Processing cart item: ${orderItem.product}`);
 
             // Find the matching product in the offer
-            const matchingOfferProduct = offer.offerProducts.find((offerProduct) =>
-              orderItem.product.equals(offerProduct.product)
+            const matchingOfferProduct = offer.offerProducts.find(
+              (offerProduct) => orderItem.product.equals(offerProduct.product)
             );
 
             if (matchingOfferProduct) {
@@ -1577,8 +1545,3 @@ exports.removeExpiredOffers = async () => {
     console.error("Error in removeExpiredOffers:", err);
   }
 };
-
-
-
-
-
