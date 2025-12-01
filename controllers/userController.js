@@ -1069,70 +1069,143 @@ exports.getTotalNumberOfUsersByMonth = asyncErrorCatch(
 );
 // total monthly blocked and verified users ends
 
+// exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.number) {
+//     return next(new ErrorHandler(400, "Please provide your phone number"));
+//   }
+
+//   const user = await userModel.findById(req.body._id);
+//   if (!user) {
+//     return next(new ErrorHandler(404, "user not found"));
+//   }
+
+//   const phoneVerifyOTP = user.getPhoneVerificationOTP();
+//   await user.save({ validateBeforeSave: false });
+
+//   const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+//   try {
+//     await sendSMS(req.body.number, message);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Verification code sent to your phone number",
+//       user: {
+//         _id: user._id,
+//         number: user.number,
+//       },
+//     });
+//   } catch (error) {
+//     user.phoneVerifyOTP = undefined;
+//     user.phoneVerifyOTPExpire = undefined;
+//     await user.save({ validateBeforeSave: false });
+
+//     return next(
+//       new ErrorHandler(500, "Error sending SMS. Please try again later.")
+//     );
+//   }
+// });
 exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
-  if (!req.body.number) {
-    return next(new ErrorHandler(400, "Please provide your phone number"));
+  if (!req.body._id) {
+    return next(new ErrorHandler(400, "Please provide user ID"));
   }
 
   const user = await userModel.findById(req.body._id);
-  if (!user) {
-    return next(new ErrorHandler(404, "user not found"));
-  }
+  if (!user) return next(new ErrorHandler(404, "User not found"));
 
-  const phoneVerifyOTP = user.getPhoneVerificationOTP();
+  const HARDCODED_OTP = "123456";
+
+  user.phoneVerifyOTP = crypto
+    .createHash("sha256")
+    .update(HARDCODED_OTP)
+    .digest("hex");
+  user.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000;
+
   await user.save({ validateBeforeSave: false });
 
-  const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+  console.log(
+    `USER PHONE OTP (hard-coded): ${HARDCODED_OTP} for user ${user.email}`
+  );
 
-  try {
-    await sendSMS(req.body.number, message);
-
-    res.status(200).json({
-      success: true,
-      message: "Verification code sent to your phone number",
-      user: {
-        _id: user._id,
-        number: user.number,
-      },
-    });
-  } catch (error) {
-    user.phoneVerifyOTP = undefined;
-    user.phoneVerifyOTPExpire = undefined;
-    await user.save({ validateBeforeSave: false });
-
-    return next(
-      new ErrorHandler(500, "Error sending SMS. Please try again later.")
-    );
-  }
+  res.status(200).json({
+    success: true,
+    message: "Verification code is 123456 (hard-coded for testing)",
+    user: { _id: user._id, number: user.number },
+  });
 });
 
-exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
-  if (!req.body.OTP) {
-    return next(new ErrorHandler(400, "Please enter phone verification OTP"));
-  }
-  if (!req.body._id) {
-    return next(new ErrorHandler(400, "Please enter user Id"));
-  }
+// exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.OTP) {
+//     return next(new ErrorHandler(400, "Please enter phone verification OTP"));
+//   }
+//   if (!req.body._id) {
+//     return next(new ErrorHandler(400, "Please enter user Id"));
+//   }
 
-  const phoneVerifyOTP = crypto
+//   const phoneVerifyOTP = crypto
+//     .createHash("sha256")
+//     .update(req.body.OTP)
+//     .digest("hex");
+
+//   const user = await userModel.findOne({
+//     phoneVerifyOTP,
+//     _id: req.body._id,
+//     phoneVerifyOTPExpire: { $gt: Date.now() },
+//   });
+
+//   if (!user) {
+//     return next(new ErrorHandler(400, "Invalid OTP or OTP has expired"));
+//   }
+
+//   user.isPhoneVerified = true;
+//   user.phoneVerifyOTP = undefined;
+//   user.phoneVerifyOTPExpire = undefined;
+
+//   await user.save({ validateBeforeSave: false });
+
+//   res.status(200).json({
+//     success: true,
+//     message: "Phone number verified successfully",
+//     user,
+//   });
+// });
+exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
+  if (!req.body.OTP) return next(new ErrorHandler(400, "Please enter OTP"));
+  if (!req.body._id) return next(new ErrorHandler(400, "Please enter user Id"));
+
+  const hashedOtp = crypto
     .createHash("sha256")
     .update(req.body.OTP)
     .digest("hex");
 
   const user = await userModel.findOne({
-    phoneVerifyOTP,
     _id: req.body._id,
+    phoneVerifyOTP: hashedOtp,
     phoneVerifyOTPExpire: { $gt: Date.now() },
   });
 
-  if (!user) {
-    return next(new ErrorHandler(400, "Invalid OTP or OTP has expired"));
+  // Accept hard-coded OTP directly
+  if (req.body.OTP === "123456") {
+    const tempUser = await userModel.findById(req.body._id);
+    if (tempUser) {
+      tempUser.isPhoneVerified = true;
+      tempUser.phoneVerifyOTP = undefined;
+      tempUser.phoneVerifyOTPExpire = undefined;
+      await tempUser.save({ validateBeforeSave: false });
+
+      return res.status(200).json({
+        success: true,
+        message: "Phone verified with hard-coded OTP 123456",
+        user: tempUser,
+      });
+    }
   }
+
+  if (!user) return next(new ErrorHandler(400, "Invalid or expired OTP"));
 
   user.isPhoneVerified = true;
   user.phoneVerifyOTP = undefined;
   user.phoneVerifyOTPExpire = undefined;
-
   await user.save({ validateBeforeSave: false });
 
   res.status(200).json({

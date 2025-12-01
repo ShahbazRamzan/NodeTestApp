@@ -1315,43 +1315,104 @@ exports.getStoreFees = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server Error" });
   }
 };
+// exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.number) {
+//     return next(new ErrorHandler(400, "Please provide your phone number"));
+//   }
+
+//   const store = await storeModel.findById(req.body._id);
+//   if (!store) {
+//     return next(new ErrorHandler(404, "Store not found"));
+//   }
+
+//   const phoneVerifyOTP = store.getPhoneVerificationOTP();
+//   await store.save({ validateBeforeSave: false });
+
+//   const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+//   try {
+//     await sendSMS(req.body.number, message);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Verification code sent to your phone number",
+//       store: {
+//         _id: store._id,
+//         number: store.number,
+//       },
+//     });
+//   } catch (error) {
+//     store.phoneVerifyOTP = undefined;
+//     store.phoneVerifyOTPExpire = undefined;
+//     await store.save({ validateBeforeSave: false });
+
+//     return next(
+//       new ErrorHandler(500, "Error sending SMS. Please try again later.")
+//     );
+//   }
+// });
+
 exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
-  if (!req.body.number) {
-    return next(new ErrorHandler(400, "Please provide your phone number"));
+  if (!req.body._id) {
+    return next(new ErrorHandler(400, "Please provide store ID"));
   }
 
   const store = await storeModel.findById(req.body._id);
-  if (!store) {
-    return next(new ErrorHandler(404, "Store not found"));
-  }
+  if (!store) return next(new ErrorHandler(404, "Store not found"));
 
-  const phoneVerifyOTP = store.getPhoneVerificationOTP();
+  // Hard-code OTP instead of generating a random one
+  const HARDCODED_OTP = "123456";
+
+  store.phoneVerifyOTP = crypto.createHash("sha256").update(HARDCODED_OTP).digest("hex");
+  store.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
   await store.save({ validateBeforeSave: false });
 
-  const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+  // You can still log it so you see it in console (no real SMS)
+  console.log(`STORE PHONE OTP (hard-coded): ${HARDCODED_OTP} for store ${store.email}`);
 
-  try {
-    await sendSMS(req.body.number, message);
-
-    res.status(200).json({
-      success: true,
-      message: "Verification code sent to your phone number",
-      store: {
-        _id: store._id,
-        number: store.number,
-      },
-    });
-  } catch (error) {
-    store.phoneVerifyOTP = undefined;
-    store.phoneVerifyOTPExpire = undefined;
-    await store.save({ validateBeforeSave: false });
-
-    return next(
-      new ErrorHandler(500, "Error sending SMS. Please try again later.")
-    );
-  }
+  res.status(200).json({
+    success: true,
+    message: "Verification code is 123456 (hard-coded for testing)",
+    store: { _id: store._id, number: store.number },
+  });
 });
 
+// exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.OTP) {
+//     return next(new ErrorHandler(400, "Please enter phone verification OTP"));
+//   }
+//   if (!req.body._id) {
+//     return next(new ErrorHandler(400, "Please enter store Id"));
+//   }
+
+//   const phoneVerifyOTP = crypto
+//     .createHash("sha256")
+//     .update(req.body.OTP)
+//     .digest("hex");
+
+//   const store = await storeModel.findOne({
+//     phoneVerifyOTP,
+//     _id: req.body._id,
+//     phoneVerifyOTPExpire: { $gt: Date.now() },
+//   });
+
+//   if (!store) {
+//     return next(new ErrorHandler(400, "Invalid OTP or OTP has expired"));
+//   }
+
+//   store.isPhoneVerified = true;
+//   store.phoneVerifyOTP = undefined;
+//   store.phoneVerifyOTPExpire = undefined;
+
+//   await store.save({ validateBeforeSave: false });
+
+//   res.status(200).json({
+//     success: true,
+//     message: "Phone number verified successfully",
+//     store,
+//   });
+// });
 exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.OTP) {
     return next(new ErrorHandler(400, "Please enter phone verification OTP"));
@@ -1360,25 +1421,38 @@ exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(400, "Please enter store Id"));
   }
 
-  const phoneVerifyOTP = crypto
-    .createHash("sha256")
-    .update(req.body.OTP)
-    .digest("hex");
+  const hashedOtp = crypto.createHash("sha256").update(req.body.OTP).digest("hex");
 
   const store = await storeModel.findOne({
-    phoneVerifyOTP,
     _id: req.body._id,
+    phoneVerifyOTP: hashedOtp,
     phoneVerifyOTPExpire: { $gt: Date.now() },
   });
 
+  // Special case for hard-coded OTP
+  if (req.body.OTP === "123456") {
+    const tempStore = await storeModel.findById(req.body._id);
+    if (tempStore) {
+      tempStore.isPhoneVerified = true;
+      tempStore.phoneVerifyOTP = undefined;
+      tempStore.phoneVerifyOTPExpire = undefined;
+      await tempStore.save({ validateBeforeSave: false });
+
+      return res.status(200).json({
+        success: true,
+        message: "Phone number verified successfully (hard-coded OTP)",
+        store: tempStore,
+      });
+    }
+  }
+
   if (!store) {
-    return next(new ErrorHandler(400, "Invalid OTP or OTP has expired"));
+    return next(new ErrorHandler(400, "Invalid or expired OTP"));
   }
 
   store.isPhoneVerified = true;
   store.phoneVerifyOTP = undefined;
   store.phoneVerifyOTPExpire = undefined;
-
   await store.save({ validateBeforeSave: false });
 
   res.status(200).json({
