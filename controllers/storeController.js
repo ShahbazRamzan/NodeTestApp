@@ -119,6 +119,87 @@ exports.storeRegister = asyncErrorCatch(async (req, res, next) => {
   });
 });
 
+// exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body.password) {
+//     return next(new ErrorHandler(400, "Please enter your password"));
+//   }
+//   if (!req.body.email) {
+//     return next(new ErrorHandler(400, "Please enter your email"));
+//   }
+
+//   const email = req.body.email.toLowerCase();
+//   const { password } = req.body;
+
+//   if (!email || !password) {
+//     return next(new ErrorHandler(400, "Please enter email and password"));
+//   }
+
+//   const store = await storeModel.findOne({ email: email }).select("+password");
+//   if (!store) {
+//     return next(new ErrorHandler(401, "Invalid Email or Password"));
+//   }
+
+//   if (store.isStoreBlock === true) {
+//     return next(
+//       new ErrorHandler(400, "Sorry, your account has been blocked by admin")
+//     );
+//   }
+
+//   const isPasswordMatched = await store.comparePassword(password);
+//   if (!isPasswordMatched) {
+//     return next(new ErrorHandler(401, "Invalid Email or Password"));
+//   }
+
+//   // Check email verification first
+//   if (!store.isEmailVerified) {
+//     const token = "";
+//     return sendOTPForEmailVerification(
+//       store,
+//       res,
+//       "Please verify your email first",
+//       token,
+//       true
+//     );
+//   }
+
+//   // Check phone verification
+//   if (!store.isPhoneVerified) {
+//     // Send OTP for phone verification
+//     const phoneVerifyOTP = store.getPhoneVerificationOTP();
+//     await store.save({ validateBeforeSave: false });
+
+//     const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+//     try {
+//       await sendSMS(store.number, message);
+//       return res.status(200).json({
+//         success: false,
+//         message: "Please verify your phone number first",
+//         requiresPhoneVerification: true,
+//         store: {
+//           _id: store._id,
+//           number: store.number,
+//         },
+//       });
+//     } catch (error) {
+//       store.phoneVerifyOTP = undefined;
+//       store.phoneVerifyOTPExpire = undefined;
+//       await store.save({ validateBeforeSave: false });
+//       return next(
+//         new ErrorHandler(500, "Error sending SMS. Please try again later.")
+//       );
+//     }
+//   }
+
+//   // If both email and phone are verified, proceed with login
+//   const token = await store.getJWTToken();
+//   res.status(200).json({
+//     success: true,
+//     message: "Login Successfully",
+//     token,
+//     store,
+//   });
+// });
 exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
   if (!req.body.password) {
     return next(new ErrorHandler(400, "Please enter your password"));
@@ -134,7 +215,7 @@ exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(400, "Please enter email and password"));
   }
 
-  const store = await storeModel.findOne({ email: email }).select("+password");
+  const store = await storeModel.findOne({ email }).select("+password");
   if (!store) {
     return next(new ErrorHandler(401, "Invalid Email or Password"));
   }
@@ -150,9 +231,10 @@ exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(401, "Invalid Email or Password"));
   }
 
-  // Check email verification first
+  const token = ""; // placeholder
+
+  // 1. Email not verified → send email OTP (real)
   if (!store.isEmailVerified) {
-    const token = "";
     return sendOTPForEmailVerification(
       store,
       res,
@@ -162,41 +244,43 @@ exports.storeLogin = asyncErrorCatch(async (req, res, next) => {
     );
   }
 
-  // Check phone verification
+  // 2. Phone not verified → Use HARDCODED OTP 123456
   if (!store.isPhoneVerified) {
-    // Send OTP for phone verification
-    const phoneVerifyOTP = store.getPhoneVerificationOTP();
+    const HARDCODED_OTP = "123456";
+
+    // Hash and save the hardcoded OTP
+    store.phoneVerifyOTP = crypto
+      .createHash("sha256")
+      .update(HARDCODED_OTP)
+      .digest("hex");
+    store.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 min expiry
+
     await store.save({ validateBeforeSave: false });
 
-    const message = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+    console.log(
+      `[STORE LOGIN] Hardcoded Phone OTP: ${HARDCODED_OTP} for store: ${store.email} (${store.name})`
+    );
 
-    try {
-      await sendSMS(store.number, message);
-      return res.status(200).json({
-        success: false,
-        message: "Please verify your phone number first",
-        requiresPhoneVerification: true,
-        store: {
-          _id: store._id,
-          number: store.number,
-        },
-      });
-    } catch (error) {
-      store.phoneVerifyOTP = undefined;
-      store.phoneVerifyOTPExpire = undefined;
-      await store.save({ validateBeforeSave: false });
-      return next(
-        new ErrorHandler(500, "Error sending SMS. Please try again later.")
-      );
-    }
+    return res.status(200).json({
+      success: false,
+      message: "Please verify your phone number first",
+      requiresPhoneVerification: true,
+      store: {
+        _id: store._id,
+        number: store.number,
+        name: store.name,
+        email: store.email,
+      },
+    });
   }
 
-  // If both email and phone are verified, proceed with login
-  const token = await store.getJWTToken();
+  // 3. Both verified → Login Success
+  const jwtToken = await store.getJWTToken();
+
   res.status(200).json({
     success: true,
     message: "Login Successfully",
-    token,
+    token: jwtToken,
     store,
   });
 });
@@ -399,6 +483,74 @@ exports.resendEmailVerificationOTP = asyncErrorCatch(async (req, res, next) => {
 //       .json({ success: true, message: "Email verified", store: store });
 //   }
 // );
+// exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
+//   async (req, res, next) => {
+//     if (!req.body.OTP) {
+//       return next(new ErrorHandler(400, "Please enter email verification OTP"));
+//     }
+//     if (!req.body._id) {
+//       return next(new ErrorHandler(400, "Please enter store Id"));
+//     }
+
+//     const emailverifyOTP = crypto
+//       .createHash("sha256")
+//       .update(req.body.OTP)
+//       .digest("hex");
+
+//     const store = await storeModel.findOne({
+//       emailverifyOTP,
+//       _id: req.body._id,
+//       emailVerifyOTPExpire: { $gt: Date.now() },
+//     });
+
+//     if (!store) {
+//       return next(new ErrorHandler(400, "Your OTP was expired"));
+//     }
+
+//     store.isEmailVerified = true;
+//     const obj = await store.save({ validateBeforeSave: false });
+
+//     if (!obj) {
+//       return next(new ErrorHandler(400, "Email Not Verified"));
+//     }
+
+//     // After email verification, automatically send phone verification OTP
+//     const phoneVerifyOTP = store.getPhoneVerificationOTP();
+//     await store.save({ validateBeforeSave: false });
+
+//     const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+//     try {
+//       await sendSMS(store.number, smsMessage);
+
+//       // const url = `http://localhost:5001/api/v1/payment/connect-stripe-account/${store._id}`;
+//       // const emailMessage = `You have one last step left! Please click on the link to connect your stripe account ${url}`;
+//       // await sendEmailTostore({
+//       //   email: store.email,
+//       //   subject: "E-Store",
+//       //   message: emailMessage,
+//       //   html: userWelcomeEmailTemplate({ url }),
+//       // });
+
+//       res.status(200).json({
+//         success: true,
+//         message: "Email verified. Please verify your phone number.",
+//         requiresPhoneVerification: true,
+//         store: {
+//           _id: store._id,
+//           number: store.number,
+//         },
+//       });
+//     } catch (error) {
+//       store.phoneVerifyOTP = undefined;
+//       store.phoneVerifyOTPExpire = undefined;
+//       await store.save({ validateBeforeSave: false });
+//       return next(
+//         new ErrorHandler(500, "Error sending SMS. Please try again later.")
+//       );
+//     }
+//   }
+// );
 exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
   async (req, res, next) => {
     if (!req.body.OTP) {
@@ -420,51 +572,46 @@ exports.verifyStoreEmailVerificationOTP = asyncErrorCatch(
     });
 
     if (!store) {
-      return next(new ErrorHandler(400, "Your OTP was expired"));
+      return next(new ErrorHandler(400, "Invalid or expired OTP"));
     }
 
+    // Mark email as verified
     store.isEmailVerified = true;
-    const obj = await store.save({ validateBeforeSave: false });
+    store.emailverifyOTP = undefined;
+    store.emailVerifyOTPExpire = undefined;
 
-    if (!obj) {
-      return next(new ErrorHandler(400, "Email Not Verified"));
-    }
+    // === HARDCODED PHONE OTP: 123456 ===
+    const HARDCODED_PHONE_OTP = "123456";
 
-    // After email verification, automatically send phone verification OTP
-    const phoneVerifyOTP = store.getPhoneVerificationOTP();
+    store.phoneVerifyOTP = crypto
+      .createHash("sha256")
+      .update(HARDCODED_PHONE_OTP)
+      .digest("hex");
+
+    store.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
     await store.save({ validateBeforeSave: false });
 
-    const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+    console.log(
+      `[STORE EMAIL VERIFIED → PHONE OTP] Hardcoded OTP: ${HARDCODED_PHONE_OTP} ` +
+        `for store: ${store.storeName || store.email} (ID: ${store._id})`
+    );
 
-    try {
-      await sendSMS(store.number, smsMessage);
-
-      // const url = `http://localhost:5001/api/v1/payment/connect-stripe-account/${store._id}`;
-      // const emailMessage = `You have one last step left! Please click on the link to connect your stripe account ${url}`;
-      // await sendEmailTostore({
-      //   email: store.email,
-      //   subject: "E-Store",
-      //   message: emailMessage,
-      //   html: userWelcomeEmailTemplate({ url }),
-      // });
-
-      res.status(200).json({
-        success: true,
-        message: "Email verified. Please verify your phone number.",
-        requiresPhoneVerification: true,
-        store: {
-          _id: store._id,
-          number: store.number,
-        },
-      });
-    } catch (error) {
-      store.phoneVerifyOTP = undefined;
-      store.phoneVerifyOTPExpire = undefined;
-      await store.save({ validateBeforeSave: false });
-      return next(
-        new ErrorHandler(500, "Error sending SMS. Please try again later.")
-      );
-    }
+    res.status(200).json({
+      success: true,
+      message: "Email verified successfully. Now verify your phone number.",
+      requiresPhoneVerification: true,
+      // Optional: helpful hint during development
+      ...(process.env.NODE_ENV !== "production" && {
+        hint: "Use OTP 123456 for phone verification (testing mode)",
+      }),
+      store: {
+        _id: store._id,
+        number: store.number,
+        storeName: store.storeName,
+        email: store.email,
+      },
+    });
   }
 );
 
@@ -1363,13 +1510,18 @@ exports.sendPhoneVerificationOTP = asyncErrorCatch(async (req, res, next) => {
   // Hard-code OTP instead of generating a random one
   const HARDCODED_OTP = "123456";
 
-  store.phoneVerifyOTP = crypto.createHash("sha256").update(HARDCODED_OTP).digest("hex");
+  store.phoneVerifyOTP = crypto
+    .createHash("sha256")
+    .update(HARDCODED_OTP)
+    .digest("hex");
   store.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
 
   await store.save({ validateBeforeSave: false });
 
   // You can still log it so you see it in console (no real SMS)
-  console.log(`STORE PHONE OTP (hard-coded): ${HARDCODED_OTP} for store ${store.email}`);
+  console.log(
+    `STORE PHONE OTP (hard-coded): ${HARDCODED_OTP} for store ${store.email}`
+  );
 
   res.status(200).json({
     success: true,
@@ -1421,7 +1573,10 @@ exports.verifyPhoneOTP = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(400, "Please enter store Id"));
   }
 
-  const hashedOtp = crypto.createHash("sha256").update(req.body.OTP).digest("hex");
+  const hashedOtp = crypto
+    .createHash("sha256")
+    .update(req.body.OTP)
+    .digest("hex");
 
   const store = await storeModel.findOne({
     _id: req.body._id,
