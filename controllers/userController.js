@@ -178,6 +178,95 @@ exports.registerUserDocument = asyncErrorCatch(async (req, res, next) => {
   );
 });
 
+// exports.userLogin = asyncErrorCatch(async (req, res, next) => {
+//   const msg = "Please verify both your email and phone number to continue";
+
+//   if (!req.body.password) {
+//     return next(new ErrorHandler(400, "Please enter your password"));
+//   }
+//   if (!req.body.email) {
+//     return next(new ErrorHandler(400, "Please enter your email"));
+//   }
+
+//   const { password } = req.body;
+//   const email = req.body.email.toLowerCase();
+
+//   if (!email || !password) {
+//     return next(new ErrorHandler(400, "Please enter email and password"));
+//   }
+
+//   const user = await userModel.findOne({ email: email }).select("+password");
+//   if (!user) {
+//     return next(new ErrorHandler(401, "Invalid Email or Password"));
+//   }
+
+//   const isPasswordMatched = await user.comparePassword(password);
+//   if (!isPasswordMatched) {
+//     return next(new ErrorHandler(401, "Invalid Email or Password"));
+//   }
+
+//   if (user.isUserBlock === true) {
+//     return next(
+//       new ErrorHandler(400, "Sorry, your account has been blocked by admin")
+//     );
+//   }
+
+//   const token = "";
+
+//   // Check both email and phone verification
+//   if (!user.isEmailVerified || !user.isPhoneVerified) {
+//     // Send verification codes for unverified channels
+//     try {
+//       if (!user.isEmailVerified) {
+//         const emailVerifyOTP = user.getEmailVerificationOPT();
+//         const emailMessage = `Your email verification OTP is: ${emailVerifyOTP}`;
+//         const htmlTemplate = fs.readFileSync(
+//           "./template/02-email-verification.html",
+//           "utf8"
+//         );
+//         const compiledTemplate = handlebars.compile(htmlTemplate);
+//         const htmlModified = compiledTemplate({
+//           verificationCode: emailVerifyOTP,
+//         });
+
+//         await sendEmailWithTemplate({
+//           email: user.email,
+//           subject: "E-Store - Email Verification",
+//           message: emailMessage,
+//           htmlModified,
+//         });
+//       }
+
+//       if (!user.isPhoneVerified) {
+//         const phoneVerifyOTP = user.getPhoneVerificationOTP();
+//         const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+//         await sendSMS(user.number, smsMessage);
+//       }
+
+//       await user.save({ validateBeforeSave: false });
+
+//       return res.status(200).json({
+//         success: false,
+//         token,
+//         message: msg,
+//         user,
+//         needsEmailVerification: !user.isEmailVerified,
+//         needsPhoneVerification: !user.isPhoneVerified,
+//       });
+//     } catch (error) {
+//       user.emailverifyOTP = undefined;
+//       user.emailVerifyOTPExpire = undefined;
+//       user.phoneVerifyOTP = undefined;
+//       user.phoneVerifyOTPExpire = undefined;
+//       await user.save({ validateBeforeSave: false });
+//       return next(new ErrorHandler(500, "Error sending verification codes"));
+//     }
+//   }
+
+//   const user2 = await userModel.findOne({ email: email });
+//   sendToken(res, 200, user2, "Login Successfully");
+// });
+
 exports.userLogin = asyncErrorCatch(async (req, res, next) => {
   const msg = "Please verify both your email and phone number to continue";
 
@@ -195,7 +284,7 @@ exports.userLogin = asyncErrorCatch(async (req, res, next) => {
     return next(new ErrorHandler(400, "Please enter email and password"));
   }
 
-  const user = await userModel.findOne({ email: email }).select("+password");
+  const user = await userModel.findOne({ email }).select("+password");
   if (!user) {
     return next(new ErrorHandler(401, "Invalid Email or Password"));
   }
@@ -211,12 +300,15 @@ exports.userLogin = asyncErrorCatch(async (req, res, next) => {
     );
   }
 
-  const token = "";
+  const token = ""; // You can generate real token later if needed
 
-  // Check both email and phone verification
+  // Check if both email and phone are verified
   if (!user.isEmailVerified || !user.isPhoneVerified) {
-    // Send verification codes for unverified channels
     try {
+      let needsEmailVerification = false;
+      let needsPhoneVerification = false;
+
+      // Handle Email Verification OTP (real or resend)
       if (!user.isEmailVerified) {
         const emailVerifyOTP = user.getEmailVerificationOPT();
         const emailMessage = `Your email verification OTP is: ${emailVerifyOTP}`;
@@ -235,36 +327,55 @@ exports.userLogin = asyncErrorCatch(async (req, res, next) => {
           message: emailMessage,
           htmlModified,
         });
+        needsEmailVerification = true;
       }
 
+      // Handle Phone Verification OTP - HARDCODED 123456
       if (!user.isPhoneVerified) {
-        const phoneVerifyOTP = user.getPhoneVerificationOTP();
-        const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
-        await sendSMS(user.number, smsMessage);
-      }
+        const HARDCODED_OTP = "123456";
 
-      await user.save({ validateBeforeSave: false });
+        user.phoneVerifyOTP = crypto
+          .createHash("sha256")
+          .update(HARDCODED_OTP)
+          .digest("hex");
+        user.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+        await user.save({ validateBeforeSave: false });
+
+        console.log(
+          `[LOGIN] Hardcoded Phone OTP: ${HARDCODED_OTP} for user: ${user.email}`
+        );
+        needsPhoneVerification = true;
+      }
 
       return res.status(200).json({
         success: false,
         token,
         message: msg,
-        user,
-        needsEmailVerification: !user.isEmailVerified,
-        needsPhoneVerification: !user.isPhoneVerified,
+        user: {
+          _id: user._id,
+          email: user.email,
+          name: user.name,
+          profile: formatFilePath(user.profile),
+        },
+        needsEmailVerification,
+        needsPhoneVerification,
       });
     } catch (error) {
+      // Cleanup OTPs on failure
       user.emailverifyOTP = undefined;
       user.emailVerifyOTPExpire = undefined;
       user.phoneVerifyOTP = undefined;
       user.phoneVerifyOTPExpire = undefined;
       await user.save({ validateBeforeSave: false });
+
       return next(new ErrorHandler(500, "Error sending verification codes"));
     }
   }
 
-  const user2 = await userModel.findOne({ email: email });
-  sendToken(res, 200, user2, "Login Successfully");
+  // If both verified → login success
+  const loggedInUser = await userModel.findOne({ email });
+  sendToken(res, 200, loggedInUser, "Login Successfully");
 });
 
 exports.Logout = asyncErrorCatch(async (req, res, next) => {
@@ -411,6 +522,68 @@ exports.resendOTP = asyncErrorCatch(async (req, res, next) => {
   });
 });
 
+// exports.verifyEmailVerificationOTP = asyncErrorCatch(async (req, res, next) => {
+//   if (!req.body._id) {
+//     return next(new ErrorHandler(400, "Please enter user Id"));
+//   }
+//   if (!req.body.OTP) {
+//     return next(new ErrorHandler(400, "Please enter email verification OTP"));
+//   }
+
+//   const isUser = await userModel.findById(req.body._id);
+//   if (!isUser) {
+//     return next(new ErrorHandler(400, "User not Found"));
+//   }
+//   if (isUser.isEmailVerified) {
+//     return next(new ErrorHandler(400, "Your email is already verified"));
+//   }
+
+//   const emailverifyOTP = crypto
+//     .createHash("sha256")
+//     .update(req.body.OTP)
+//     .digest("hex");
+
+//   const user = await userModel.findOne({
+//     emailverifyOTP,
+//     _id: req.body._id,
+//     emailVerifyOTPExpire: { $gt: Date.now() },
+//   });
+
+//   if (!user) {
+//     return next(new ErrorHandler(400, "Your OTP was expired"));
+//   }
+
+//   user.isEmailVerified = true;
+//   await user.save({ validateBeforeSave: false });
+
+//   // Generate Phone Verification OTP
+//   const phoneVerifyOTP = user.getPhoneVerificationOTP();
+//   await user.save({ validateBeforeSave: false });
+
+//   const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
+
+//   try {
+//     await sendSMS(user.number, smsMessage);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Email verified. Please verify your phone number.",
+//       requiresPhoneVerification: true,
+//       user: {
+//         _id: user._id,
+//         number: user.number,
+//       },
+//     });
+//   } catch (error) {
+//     user.phoneVerifyOTP = undefined;
+//     user.phoneVerifyOTPExpire = undefined;
+//     await user.save({ validateBeforeSave: false });
+//     return next(
+//       new ErrorHandler(500, "Error sending SMS. Please try again later.")
+//     );
+//   }
+// });
+
 exports.verifyEmailVerificationOTP = asyncErrorCatch(async (req, res, next) => {
   if (!req.body._id) {
     return next(new ErrorHandler(400, "Please enter user Id"));
@@ -439,38 +612,42 @@ exports.verifyEmailVerificationOTP = asyncErrorCatch(async (req, res, next) => {
   });
 
   if (!user) {
-    return next(new ErrorHandler(400, "Your OTP was expired"));
+    return next(new ErrorHandler(400, "Your OTP was expired or invalid"));
   }
 
+  // Mark email as verified
   user.isEmailVerified = true;
+  user.emailverifyOTP = undefined;
+  user.emailVerifyOTPExpire = undefined;
+
+  // === HARDCODED PHONE OTP AFTER EMAIL VERIFICATION ===
+  const HARDCODED_PHONE_OTP = "123456";
+
+  user.phoneVerifyOTP = crypto
+    .createHash("sha256")
+    .update(HARDCODED_PHONE_OTP)
+    .digest("hex");
+  user.phoneVerifyOTPExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+
   await user.save({ validateBeforeSave: false });
 
-  // Generate Phone Verification OTP
-  const phoneVerifyOTP = user.getPhoneVerificationOTP();
-  await user.save({ validateBeforeSave: false });
+  console.log(
+    `[EMAIL VERIFIED → PHONE OTP] Hardcoded OTP: ${HARDCODED_PHONE_OTP} for user: ${user.email} (ID: ${user._id})`
+  );
 
-  const smsMessage = `Your Skip A Line phone verification code is: ${phoneVerifyOTP}. Valid for 10 minutes.`;
-
-  try {
-    await sendSMS(user.number, smsMessage);
-
-    res.status(200).json({
-      success: true,
-      message: "Email verified. Please verify your phone number.",
-      requiresPhoneVerification: true,
-      user: {
-        _id: user._id,
-        number: user.number,
-      },
-    });
-  } catch (error) {
-    user.phoneVerifyOTP = undefined;
-    user.phoneVerifyOTPExpire = undefined;
-    await user.save({ validateBeforeSave: false });
-    return next(
-      new ErrorHandler(500, "Error sending SMS. Please try again later.")
-    );
-  }
+  // Respond immediately — no SMS sent
+  res.status(200).json({
+    success: true,
+    message: "Email verified successfully. Now verify your phone number.",
+    requiresPhoneVerification: true,
+    hardcodedPhoneOTPHint: "Use 123456 as phone OTP (testing mode)", // Optional: remove in production
+    user: {
+      _id: user._id,
+      number: user.number,
+      name: user.name,
+      email: user.email,
+    },
+  });
 });
 
 exports.verifyResetPasswordOTP = asyncErrorCatch(async (req, res, next) => {
